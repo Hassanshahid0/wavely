@@ -3,6 +3,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const morgan = require('morgan');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -27,9 +30,12 @@ const PORT = process.env.PORT || 5000;
 // ============================
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman / server-to-server
+    // Allow all origins in development or if it matches certain patterns
+    if (!origin || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
 
-    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || origin.startsWith('http://10.') || origin.startsWith('http://20.')) {
       return callback(null, true);
     }
 
@@ -41,21 +47,37 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    return callback(new Error('CORS blocked: ' + origin));
+    // In production, be strict. In development, allow.
+    if (process.env.NODE_ENV === 'production') {
+      return callback(new Error('CORS blocked: ' + origin));
+    }
+    
+    return callback(null, true); 
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 };
 
 // ============================
 // MIDDLEWARE
 // ============================
+app.use(helmet()); // Security headers
+app.use(compression()); // Compress responses
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again after 15 minutes'
+});
+app.use('/api/', limiter);
+
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
-app.use(morgan('dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // ============================
 // SOCKET.IO SETUP
@@ -118,11 +140,25 @@ app.use('/api/stories', storiesRoutes);
 // ============================
 if (process.env.NODE_ENV === 'production') {
   const path = require('path');
-  app.use(express.static(path.join(__dirname, 'client/build')));
+  // Adjust path to Vite's default 'dist' folder
+  const frontendPath = path.join(__dirname, '../frontend/dist');
+  app.use(express.static(frontendPath));
+  
   app.get('*', (req, res) => {
-    res.sendFile(path.resolve(__dirname, 'client', 'build', 'index.html'));
+    res.sendFile(path.resolve(frontendPath, 'index.html'));
   });
 }
+
+// ============================
+// ERROR HANDLING
+// ============================
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({
+    message: err.message || 'Internal Server Error',
+    error: process.env.NODE_ENV === 'production' ? {} : err
+  });
+});
 
 // ============================
 // DATABASE CONNECTION + SERVER START
@@ -131,8 +167,8 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log('Connected to MongoDB');
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT} (accessible at 0.0.0.0)`);
     });
   })
   .catch((err) => {
