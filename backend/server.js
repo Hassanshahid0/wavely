@@ -47,8 +47,11 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // In production, be strict. In development, allow.
+    // In production, be strict but allow common network ranges we use
     if (process.env.NODE_ENV === 'production') {
+      if (origin.startsWith('http://10.') || origin.startsWith('http://20.')) {
+        return callback(null, true);
+      }
       return callback(new Error('CORS blocked: ' + origin));
     }
     

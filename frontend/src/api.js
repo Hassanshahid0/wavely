@@ -1,9 +1,17 @@
 import axios from 'axios';
 
 const getApiBase = () => {
+  // 1. Check environment variable first (should be http://20.251.201.162:5000)
   if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
-  // Auto-detect based on current window location for development/server deployment
+
+  // 2. Auto-detect based on current window location
   const { protocol, hostname } = window.location;
+  
+  // 3. Fallback logic: If on public IP, use it. If on localhost, use localhost.
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return `${protocol}//localhost:5000`;
+  }
+  
   return `${protocol}//${hostname}:5000`;
 };
 
